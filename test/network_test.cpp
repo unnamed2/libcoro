@@ -1,6 +1,11 @@
 #include <scheduler.hpp>
 #include <awaiters.hpp>
+
+#ifdef WIN32
 #include <win32_iocp.hpp>
+#else
+#include <linux_epoll.hpp>
+#endif
 
 using namespace std::literals;
 
@@ -8,8 +13,10 @@ size_t count = 0;
 
 coro::task2 read_and_send(coro::net::socket_t sock_object) {
 	char buff[1024];
+	printf("client coroutine running.\n");
 	while (true) {
 		int recv_result = co_await coro::net::recv(sock_object, buff, 1023, 0);
+		printf("recv return %d\n", recv_result);
 		if (recv_result <= 0) {
 			coro::net::close_socket(sock_object);
 			co_return;
@@ -46,7 +53,7 @@ coro::task2 service(const char* ip_addr, uint16_t port) {
 		sockaddr_in client_addr = {};
 		socklen_t client_addr_len = sizeof(client_addr);
 		coro::net::socket_t client_sock = co_await coro::net::accept(sock, (sockaddr*)&client_addr, (socklen_t*)&client_addr_len);
-		if (client_sock == INVALID_SOCKET) {
+		if (client_sock == coro::net::invalid_socket) {
 			printf("failed to accept\n");
 			co_return;
 		}
@@ -60,5 +67,6 @@ coro::task2 service(const char* ip_addr, uint16_t port) {
 int main()
 {
 	coro::start_main_coroutine(service("0.0.0.0", 5432));
+	printf("FFKK\n");
 	return 0;
 }

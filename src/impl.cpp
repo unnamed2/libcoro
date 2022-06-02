@@ -1,5 +1,9 @@
 #include <scheduler.hpp>
 
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+
 #ifdef min
 #define min_undefined
 #undef min
@@ -70,7 +74,6 @@ namespace coro {
 				}
 				cv.notify_all();
 			}
-
 		};
 	}
 	
@@ -121,15 +124,18 @@ namespace coro {
 		}
 
 		bool invoke(coroutine_handle handle) {
+			printf("invoke called... %p\n", handle.address());
 			handle.resume();
-
+			printf("invoke called2... %p\n", handle.address());
 			if (handle.done()) {
+				printf("invoke called3... %p\n", handle.address());
 				if (handle == main_handle) {
+					printf("invoke called4... %p\n", handle.address());
 					cv.notify_all();
 				}
+				handle.destroy();
 				return false;
 			}
-
 			return handle.promise().status == task_status::ready;
 		}
 	};
@@ -216,5 +222,21 @@ namespace coro::win32 {
 			WSACleanup();
 		}
 	} __initializer;
+}
+#endif
+
+#ifdef __linux__
+#include <linux_epoll.hpp>
+
+namespace coro::linux_epoll {
+	coro::linux_epoll::epoll_awaiter* get_epoll_awaiter() {
+		static coro::linux_epoll::epoll_awaiter* instance = nullptr;
+		static std::once_flag flag;
+		std::call_once(flag, []() {
+			instance = new coro::linux_epoll::epoll_awaiter();
+			__thread_scheduler->schedule(instance);
+		});
+		return instance;
+	}
 }
 #endif

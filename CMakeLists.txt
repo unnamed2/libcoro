@@ -9,6 +9,8 @@ include_directories(include)
 file(GLOB SRCS src/*.cpp)
 file(GLOB HEADERS include/*.h)
 
+set(CMAKE_CXX_FLAGS "-O0 -g")
+
 add_executable(coroutine_test test/coroutine_test.cpp ${SRCS} ${HEADERS})
 
 add_executable(network_test test/network_test.cpp ${SRCS} ${HEADERS})

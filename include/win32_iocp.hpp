@@ -271,6 +271,8 @@ namespace coro::net
 	[[nodiscard]] inline connect_awaiter connect(socket_t sock, const sockaddr* addr, int namelen) {
 		return { ::connect(sock, addr, namelen) };
 	}
+
+	constexpr inline socket_t invalid_socket = INVALID_SOCKET;
 }
 
 

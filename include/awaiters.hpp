@@ -2,6 +2,7 @@
 #include <atomic>
 #include <queue>
 #include <scheduler.hpp>
+#include <thread>
 
 namespace coro {
     struct spin_lock {
