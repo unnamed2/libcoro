@@ -9,24 +9,18 @@
 #include <WS2tcpip.h>
 #include <MSWSock.h>
 #include <Windows.h>
-
+#include <string>
 #include <stdint.h>
-
+#include <functional>
 #include "scheduler.hpp"
 
 namespace coro::win32 {
 	
-	using iocp_routine_callback = void(*)(void* context, DWORD error_code , size_t bytes_transferred);
-
-	template<typename _Caller>
-	void iocp_routine(void* context,DWORD error_code, size_t bytes_transferred) {
-		(*reinterpret_cast<_Caller*>(context))(error_code, bytes_transferred);
-	}
+	using iocp_routine_callback = std::function<void(DWORD, size_t)>;
 	
 	struct iocp_overlapped {
-		OVERLAPPED overlapped;
+		OVERLAPPED overlapped = { };
 		iocp_routine_callback routine;
-		void* context;
 	};
 	
 	struct iocp_awaiter : thread_awaiter {
@@ -42,16 +36,14 @@ namespace coro::win32 {
 			if (GetQueuedCompletionStatus(iocp_handle, &bytes_transferred, &completion_key, &overlapped, INFINITE)) {
 				iocp_overlapped* overlapped2 = reinterpret_cast<iocp_overlapped*>(overlapped);
 				if (overlapped2->routine != nullptr) {
-					printf("call routine %p \n", overlapped2->routine);
-					overlapped2->routine(overlapped2->context, 0, bytes_transferred);
-					printf("called routine %p \n", overlapped2->routine);
+					overlapped2->routine(0, bytes_transferred);
 				}
 			}
 			else {
 				if (overlapped != nullptr) {
 					iocp_overlapped* overlapped2 = reinterpret_cast<iocp_overlapped*>(overlapped);
 					if (overlapped2->routine != nullptr)
-						overlapped2->routine(overlapped2->context, WSAGetLastError(), bytes_transferred);
+						overlapped2->routine(WSAGetLastError(), bytes_transferred);
 				}
 			}
 		} 
@@ -69,9 +61,8 @@ namespace coro::win32 {
 
 	template<typename _Caller>
 	inline void init_overlapped(iocp_overlapped* overlapped, _Caller&& cb) {
-		memset(overlapped, 0, sizeof(iocp_overlapped));
-		overlapped->routine = &iocp_routine<_Caller>;
-		overlapped->context = std::addressof(cb);
+		memset(&overlapped->overlapped, 0, sizeof(OVERLAPPED));
+		overlapped->routine = cb;
 	}
 }
 
@@ -173,7 +164,7 @@ namespace coro::net
 		}
 		
 		bool await_suspend(coroutine_handle handle) {
-			win32::init_overlapped(&overlapped, [this, handle](DWORD errorCode , size_t trans) {
+			win32::init_overlapped(&overlapped, [this, handle](DWORD errorCode, size_t trans) {
 				WSASetLastError(errorCode);
 				if (errorCode == 0)
 					ret_value = (int)trans;
@@ -232,6 +223,8 @@ namespace coro::net
 				});
 
 			int ret = WSASend(socket, (WSABUF*)&buf, 1, &send_len, flag, &overlapped.overlapped, nullptr);
+			
+			
 			if (ret == SOCKET_ERROR && WSAGetLastError() != WSA_IO_PENDING) {
 				return false;
 			}

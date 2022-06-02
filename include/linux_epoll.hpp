@@ -3,7 +3,7 @@
 
 #ifndef __linux__
 #error "This header is only for use on Linux systems."
-#endif
+#else
 
 #include "scheduler.hpp"
 
@@ -264,5 +264,7 @@ namespace coro::net
 
     constexpr inline socket_t invalid_socket = -1;
 }
+
+#endif
 
 #endif

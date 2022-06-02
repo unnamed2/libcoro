@@ -13,15 +13,12 @@ size_t count = 0;
 
 coro::task2 read_and_send(coro::net::socket_t sock_object) {
 	char buff[1024];
-	printf("client coroutine running.\n");
 	while (true) {
 		int recv_result = co_await coro::net::recv(sock_object, buff, 1023, 0);
-		printf("recv return %d\n", recv_result);
 		if (recv_result <= 0) {
 			coro::net::close_socket(sock_object);
 			co_return;
 		}
-
 		buff[recv_result] = 0;
 		printf("recv :: %s\n", buff);
 

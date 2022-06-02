@@ -13,6 +13,11 @@
 #define max_undefined
 #undef max
 #endif
+
+int tid() {
+	return _Thrd_id();
+}
+
 namespace coro {
 
 	namespace details {
@@ -118,19 +123,17 @@ namespace coro {
 		auto acquire_one() {
 			int select_id = rand() % handles.size();
 			auto handle = handles[select_id];
-			handles[select_id] = handles.back();
+			if (select_id != handles.size() - 1) {
+				handles[select_id] = handles.back();
+			}
 			handles.pop_back();
 			return handle;
 		}
 
 		bool invoke(coroutine_handle handle) {
-			printf("invoke called... %p\n", handle.address());
 			handle.resume();
-			printf("invoke called2... %p\n", handle.address());
 			if (handle.done()) {
-				printf("invoke called3... %p\n", handle.address());
 				if (handle == main_handle) {
-					printf("invoke called4... %p\n", handle.address());
 					cv.notify_all();
 				}
 				handle.destroy();
