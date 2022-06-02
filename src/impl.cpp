@@ -14,10 +14,6 @@
 #undef max
 #endif
 
-int tid() {
-	return _Thrd_id();
-}
-
 namespace coro {
 
 	namespace details {
