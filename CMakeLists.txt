@@ -12,3 +12,5 @@ file(GLOB HEADERS include/*.h)
 add_executable(coroutine_test test/coroutine_test.cpp ${SRCS} ${HEADERS})
 
 add_executable(network_test test/network_test.cpp ${SRCS} ${HEADERS})
+
+add_executable(cond_test test/cond_test.cpp ${SRCS} ${HEADERS})

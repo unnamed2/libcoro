@@ -3,7 +3,6 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
-
 #ifdef min
 #define min_undefined
 #undef min
@@ -77,7 +76,7 @@ namespace coro {
 			}
 		};
 	}
-	
+
 	struct awaiter_pool {
 		std::vector<thread_awaiter*> awaiters;
 		size_t size() const { return awaiters.size(); }
@@ -100,98 +99,157 @@ namespace coro {
 		void schedule(thread_awaiter* awaiter) {
 			workers.push_arg(awaiter);
 		}
-	} * __thread_scheduler = new thread_scheduler();
-
-	struct coroutine_pool {
-		std::vector<coroutine_handle> handles;
-
-		coroutine_handle main_handle;
-		std::condition_variable& cv;
-		coroutine_pool(coroutine_handle main, std::condition_variable& cv) : main_handle(main), cv(cv) {
-		}
-
-		size_t size() const { return handles.size(); }
-
-		void add(coroutine_handle handle) {
-			handles.emplace_back(handle);
-		}
-
-		auto acquire_one() {
-			int select_id = rand() % handles.size();
-			auto handle = handles[select_id];
-			if (select_id != handles.size() - 1) {
-				handles[select_id] = handles.back();
-			}
-			handles.pop_back();
-			return handle;
-		}
-
-		bool invoke(coroutine_handle handle) {
-			handle.resume();
-			if (handle.done()) {
-				if (handle == main_handle) {
-					cv.notify_all();
-				}
-				handle.destroy();
-				return false;
-			}
-			return handle.promise().status == task_status::ready;
-		}
-	};
+	} *__thread_scheduler = new thread_scheduler();
 
 	struct coroutine_scheduler {
-		details::thread_worker<coroutine_pool> workers;
-		std::mutex mtx;
-		coroutine_handle main_coroutine;
+	private:
+		std::mutex mtx, mtx_main;
 
-		std::condition_variable cv;
+		std::stop_source stop_;
+		std::vector<coroutine_handle> coroutines;
+		std::condition_variable cv_schedule, cv_main_done;
+		std::vector<std::thread> worker_threads;
+		std::atomic<size_t> free_threads = 0;
+		coroutine_handle main_handle;
 	public:
-		coroutine_scheduler(coroutine_handle main_handle)
-			: workers(std::thread::hardware_concurrency() - 1, main_handle, cv), main_coroutine(main_handle) {
 
+		coroutine_scheduler(coroutine_handle main_handle) : main_handle(main_handle) {
+			coroutines.push_back(main_handle);
+			buy(1);
 		}
 
 		void schedule(coroutine_handle handle) {
-			workers.push_arg(handle);
+			std::lock_guard<std::mutex> lg(mtx);
+			buy(1);
+			coroutines.emplace_back(handle);
+			cv_schedule.notify_one();
 		}
 
-		void schedule(const std::vector<coroutine_handle>& handles) {
-			workers.push_arg(handles.data(), handles.size());
+		void schedule(std::vector<coroutine_handle>& handles) {
+			std::lock_guard<std::mutex> lg(mtx);
+			buy(handles.size());
+			for (auto v : handles) {
+				coroutines.emplace_back(v);
+			}
+			cv_schedule.notify_all();
 		}
 
-		void wait_for_main_coroutine() {
-			std::unique_lock ul(mtx);
-			cv.wait(ul, [this]() {
-				return main_coroutine.done();
-			});
+		void stop_schedule() {
+			stop_.request_stop();
+			cv_schedule.notify_all();
+			for (auto& v : worker_threads) {
+				v.join();
+			}
+			worker_threads.clear();
+			free_threads = 0;
 		}
-	} * __coroutine_scheduler = nullptr;
-	
-	
+
+		void wait_for_main() {
+			std::unique_lock<std::mutex> ul(mtx_main);
+			cv_main_done.wait(ul, [this]() {return main_handle == nullptr; });
+		}
+	private:
+
+		void buy(size_t count) {
+			static size_t max_count = (size_t)std::thread::hardware_concurrency();
+			size_t f = free_threads.load();
+			auto upto = std::min(max_count, worker_threads.size() + count - f);
+
+			for (size_t i = worker_threads.size(); i < upto; i++) {
+				worker_threads.emplace_back(&coroutine_scheduler::worker_thread_main, this, stop_.get_token());
+			}
+		}
+
+		size_t random() {
+			static uint64_t s[2] = { (uint64_t)rand(),  (uint64_t)rand() + 1 };
+			uint64_t a = s[0];
+			uint64_t b = s[1];
+
+			s[0] = b;
+			a ^= a << 23;
+			a ^= a >> 18;
+			a ^= b;
+			a ^= b >> 5;
+			s[1] = a;
+
+			return a + b;
+		}
+
+		auto coro_select() {
+			size_t select_id = random() % coroutines.size();
+			auto handle = coroutines[select_id];
+			if (select_id != coroutines.size() - 1) {
+				coroutines[select_id] = coroutines.back();
+			}
+			coroutines.pop_back();
+			return handle;
+		}
+
+		void worker_thread_main(std::stop_token token) {
+			std::unique_lock<std::mutex> ul(mtx);
+			while (true) {
+				free_threads++;
+				cv_schedule.wait(ul, [this, token]() {return coroutines.size() > 0 || token.stop_requested(); });
+				free_threads--;
+
+				if (token.stop_requested())
+					return;
+
+				auto handle = coro_select();
+				if (handle.done()) {
+					handle.destroy();
+					continue;
+				}
+				ul.unlock();
+
+				handle.resume();
+
+				ul.lock();
+				if (handle.done()) {
+					if (handle == main_handle) {
+						std::scoped_lock<std::mutex> lg(mtx_main);
+						main_handle = nullptr;
+						cv_main_done.notify_all();
+					}
+					handle.destroy();
+				}
+				else if (handle.promise().status == task_status::ready) {
+					coroutines.push_back(handle);
+				}
+			}
+		}
+	} *__coroutine_scheduler;
+
+
 	inline bool awaiter_pool::invoke(thread_awaiter* awaiter) {
 		std::vector<coroutine_handle> handles;
 		awaiter->wait(handles);
 		__coroutine_scheduler->schedule(handles);
 		return !awaiter->should_suspend();
 	}
-	
+
 	void start_main_coroutine(coroutine_handle main_handle) {
-		if(__coroutine_scheduler != nullptr) {
+		if (__coroutine_scheduler != nullptr) {
 			return;
 		}
-		
+
 		__coroutine_scheduler = new coroutine_scheduler(main_handle);
-		go(main_handle);
-		__coroutine_scheduler->wait_for_main_coroutine();
+		__coroutine_scheduler->wait_for_main();
+		__coroutine_scheduler->stop_schedule();
 	}
 
 	void park(coroutine_handle handle) {
-		handle.promise().status = task_status::suspend;
+		auto& status_ref = handle.promise().status;
+		if (status_ref == task_status::ready || status_ref == task_status::created)
+			status_ref = task_status::suspend;
 	}
 
 	void go(coroutine_handle handle) {
-		handle.promise().status = task_status::ready;
-		__coroutine_scheduler->schedule(handle);
+		auto& status_ref = handle.promise().status;
+		if (status_ref == task_status::created || status_ref == task_status::suspend) {
+			status_ref = task_status::ready;
+			__coroutine_scheduler->schedule(handle);
+		}
 	}
 }
 
@@ -234,7 +292,7 @@ namespace coro::linux_epoll {
 		std::call_once(flag, []() {
 			instance = new coro::linux_epoll::epoll_awaiter();
 			__thread_scheduler->schedule(instance);
-		});
+			});
 		return instance;
 	}
 }

@@ -10,12 +10,11 @@
 namespace coro {
 
 	enum class task_status {
+		created,
 		ready,
 		suspend,
-		final,
+		done,
 	};
-
-	
 
 	struct task2 {
 		struct promise_type {
@@ -33,8 +32,9 @@ namespace coro {
 			
 			struct task2_final_suspend {
 				constexpr bool await_ready() const noexcept { return false; }
+				
 				bool await_suspend(std::coroutine_handle<promise_type> handle) const noexcept {
-					handle.promise().status = task_status::final;
+					handle.promise().status = task_status::done;
 					return true;
 				}
 				
@@ -49,7 +49,7 @@ namespace coro {
 
 			void return_void() {}
 
-			task_status status = task_status::ready;
+			task_status status = task_status::created;
 
 		};
 
@@ -72,7 +72,6 @@ namespace coro {
 
 		auto& promise() const noexcept { return handle.promise(); }
 		auto& get() const noexcept { return handle; }
-
 
 	private:
 		handle_type handle;
